@@ -30,17 +30,29 @@ function Warn([string]$Msg) { Write-Host "  ! $Msg" -ForegroundColor Yellow }
 $SCRIPT_DIR = if ($PSScriptRoot) { $PSScriptRoot } else { $PWD.Path }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  0. Sanity — Windows only
+#  0. Sanity — Windows only; elevate to admin if needed
 # ─────────────────────────────────────────────────────────────────────────────
 if ($env:OS -ne 'Windows_NT') {
     Write-Error 'This script is for Windows only.'; exit 1
+}
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Warn 'Not running as Administrator — winget package installs (MSI) may hang waiting for a hidden UAC prompt.'
+    Warn 'Re-run this script from an elevated (Run as Administrator) terminal for a fully silent install.'
+    Warn 'Continuing anyway — installer UI and UAC prompts will appear as needed.'
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  1. Execution policy
 # ─────────────────────────────────────────────────────────────────────────────
 Info 'Setting execution policy to RemoteSigned for current user...'
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+try {
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+} catch {
+    # A process-scope or Group Policy override raises a terminating error; harmless to ignore.
+}
 Ok 'Execution policy set.'
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -54,9 +66,11 @@ Ok 'winget is available.'
 
 # Reload PATH in the current session after winget installs a tool.
 function Update-EnvPath {
-    $machine = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
-    $user    = [Environment]::GetEnvironmentVariable('PATH', 'User')
-    $env:PATH = "$machine;$user"
+    $machine     = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
+    $user        = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    # MSIX app execution aliases (oh-my-posh, pwsh, etc.) live here and aren't in registry PATH.
+    $windowsApps = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+    $env:PATH = "$machine;$user;$windowsApps"
 }
 
 # Install a winget package, guarded by a command-existence check.
@@ -65,8 +79,10 @@ function Install-WingetPackage([string]$Id, [string]$TestCommand, [string]$Displ
         Ok "$DisplayName already installed."; return
     }
     Info "Installing $DisplayName..."
+    # Omit --silent so the MSI installer's UI and any UAC prompt are visible;
+    # --silent causes winget to hang when elevation is required but not pre-granted.
     winget install --id $Id --source winget `
-        --accept-package-agreements --accept-source-agreements --silent
+        --accept-package-agreements --accept-source-agreements
     Update-EnvPath
     Ok "$DisplayName installed."
 }
@@ -89,15 +105,36 @@ function Remove-JsonComments([string]$Json) {
 Install-WingetPackage 'Microsoft.PowerShell' 'pwsh' 'PowerShell 7'
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  4. Oh My Posh
+#  4. Oh My Posh  (direct binary — avoids MSIX/AppX staging which hangs on
+#                  some machines; winget's OhMyPosh package is an MSIX)
 # ─────────────────────────────────────────────────────────────────────────────
-Install-WingetPackage 'JanDeDobbeleer.OhMyPosh' 'oh-my-posh' 'Oh My Posh'
+$ompDir = "$env:LOCALAPPDATA\Programs\oh-my-posh\bin"
+$ompExe = "$ompDir\oh-my-posh.exe"
+
+if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+    Ok 'Oh My Posh already installed.'
+    $ompExe = (Get-Command oh-my-posh).Source
+} elseif (Test-Path $ompExe) {
+    Ok 'Oh My Posh already installed (binary).'
+} else {
+    Info 'Installing Oh My Posh (direct binary download)...'
+    New-Item -ItemType Directory -Force -Path $ompDir | Out-Null
+    Invoke-WebRequest 'https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-amd64.exe' `
+        -OutFile $ompExe -UseBasicParsing
+    # Add to user PATH so new sessions find it.
+    $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    if ($userPath -notlike "*$ompDir*") {
+        [Environment]::SetEnvironmentVariable('PATH', "$userPath;$ompDir", 'User')
+    }
+    $env:PATH = "$env:PATH;$ompDir"
+    Ok 'Oh My Posh installed.'
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  5. MesloLGS Nerd Font  (oh-my-posh ships its own font installer)
 # ─────────────────────────────────────────────────────────────────────────────
 Info 'Installing MesloLGS Nerd Font...'
-oh-my-posh font install meslo
+& $ompExe font install meslo
 Ok 'MesloLGS Nerd Font installed.'
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,8 +160,8 @@ if (Get-Module PSFzf -ListAvailable) {
 #  8. PowerShell 7 profile
 # ─────────────────────────────────────────────────────────────────────────────
 $profileSrc = Join-Path $SCRIPT_DIR 'profile.ps1'
-# Always target PS7's profile path regardless of which PS version runs this script.
-$ps7Profile    = [IO.Path]::Combine($HOME, 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1')
+# Ask pwsh itself for its profile path — handles OneDrive/redirected Documents folders.
+$ps7Profile    = pwsh -NoProfile -Command '$PROFILE.CurrentUserCurrentHost'
 $ps7ProfileDir = Split-Path $ps7Profile -Parent
 $timestamp     = Get-Date -Format 'yyyyMMdd-HHmmss'
 
@@ -208,14 +245,14 @@ if ($wtSettings) {
 
         # Set font in profiles.defaults so it applies to every profile.
         $json.profiles.defaults | Add-Member -MemberType NoteProperty -Name 'font' `
-            -Value ([PSCustomObject]@{ face = 'MesloLGS NF' }) -Force
+            -Value ([PSCustomObject]@{ face = 'MesloLGS Nerd Font Mono' }) -Force
 
         Copy-Item $wtSettings "$wtSettings.backup-$timestamp"
         $json | ConvertTo-Json -Depth 20 | Set-Content $wtSettings -Encoding UTF8
         Ok 'Windows Terminal settings patched.'
     } catch {
         Warn "Could not auto-patch Windows Terminal settings: $_"
-        Warn 'Set manually: Settings -> Defaults -> Appearance -> Font face: MesloLGS NF'
+        Warn 'Set manually: Settings -> Defaults -> Appearance -> Font face: MesloLGS Nerd Font Mono'
         Warn 'And set defaultProfile to {574e775e-4f2a-5b96-ac1e-a2962a402336}'
     }
 } else {
@@ -236,7 +273,7 @@ foreach ($vsPath in $vsCodePaths) {
     try {
         $json = (Remove-JsonComments (Get-Content $vsPath -Raw)) | ConvertFrom-Json
         $json | Add-Member -MemberType NoteProperty `
-            -Name 'terminal.integrated.fontFamily' -Value 'MesloLGS NF' -Force
+            -Name 'terminal.integrated.fontFamily' -Value 'MesloLGS Nerd Font Mono' -Force
         Copy-Item $vsPath "$vsPath.backup-$timestamp"
         $json | ConvertTo-Json -Depth 20 | Set-Content $vsPath -Encoding UTF8
         Ok 'VS Code settings patched.'
