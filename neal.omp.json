@@ -1,0 +1,134 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "version": 4,
+  "final_space": true,
+  "console_title_template": "{{ .Shell }} in {{ .Folder }}",
+  "blocks": [
+    {
+      "type": "newline"
+    },
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "242",
+          "template": "\u256d\u2500"
+        },
+        {
+          "type": "os",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "foreground": "232",
+          "background": "7",
+          "template": " {{ if .WSL }}WSL at {{ end }}{{ .Icon }} "
+        },
+        {
+          "type": "path",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "foreground": "254",
+          "background": "4",
+          "template": " {{ .Path }} ",
+          "options": {
+            "style": "unique",
+            "home_icon": "~"
+          }
+        },
+        {
+          "type": "git",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b0",
+          "foreground": "0",
+          "background": "2",
+          "background_templates": [
+            "{{ if or (.Working.Changed) (.Staging.Changed) }}3{{ end }}"
+          ],
+          "template": " {{ .HEAD }}{{ if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} \uf044 {{ .Working.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Staging.Changed }} \uf046 {{ .Staging.String }}{{ end }}{{ if gt .StashCount 0 }} *{{ .StashCount }}{{ end }} ",
+          "options": {
+            "branch_icon": "\uf126 ",
+            "fetch_status": true,
+            "fetch_stash_count": true
+          }
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "right",
+      "segments": [
+        {
+          "type": "status",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b2",
+          "invert_powerline": true,
+          "foreground": "2",
+          "background": "0",
+          "foreground_templates": [
+            "{{ if .Error }}3{{ end }}"
+          ],
+          "background_templates": [
+            "{{ if .Error }}1{{ end }}"
+          ],
+          "template": " {{ if .Error }}\u2718{{ else }}\u2714{{ end }} ",
+          "options": {
+            "always_enabled": true
+          }
+        },
+        {
+          "type": "executiontime",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b2",
+          "invert_powerline": true,
+          "foreground": "0",
+          "background": "3",
+          "template": " took {{ .FormattedMs }} ",
+          "options": {
+            "threshold": 3000
+          }
+        },
+        {
+          "type": "time",
+          "style": "powerline",
+          "powerline_symbol": "\ue0b2",
+          "invert_powerline": true,
+          "foreground": "0",
+          "background": "7",
+          "template": " at {{ .CurrentDate | date \"15:04:05\" }} "
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "242",
+          "template": "\u2500\u256e"
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "242",
+          "template": "\u2570\u2500"
+        }
+      ]
+    },
+    {
+      "type": "rprompt",
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "242",
+          "template": "\u2500\u256f"
+        }
+      ]
+    }
+  ]
+}
